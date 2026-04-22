@@ -200,6 +200,22 @@ async fn serve(config: config::Config) -> anyhow::Result<()> {
     });
     tracing::info!("Webhook dispatcher background worker started");
 
+    // Start DLQ auto-retry background worker (polls every 60 seconds)
+    let dlq_pool = pool.clone();
+    tokio::spawn(async move {
+        use synapse_core::services::TransactionProcessor;
+        let processor = TransactionProcessor::new(dlq_pool.clone())
+            .with_webhook_dispatcher(WebhookDispatcher::new(dlq_pool));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(e) = processor.process_dlq_retries().await {
+                tracing::error!("DLQ auto-retry error: {e}");
+            }
+        }
+    });
+    tracing::info!("DLQ auto-retry background worker started");
+
     // Initialize metrics
     let _metrics_handle = metrics::init_metrics()
         .map_err(|e| anyhow::anyhow!("Failed to initialize metrics: {}", e))?;
