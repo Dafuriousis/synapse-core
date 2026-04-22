@@ -21,6 +21,9 @@ pub struct Transaction {
     pub memo: Option<String>,
     pub memo_type: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    /// Processing priority: 0 = normal, 1 = high, 2 = critical
+    #[serde(default)]
+    pub priority: i16,
 }
 
 #[async_graphql::Object]
@@ -64,6 +67,9 @@ impl Transaction {
     async fn memo_type(&self) -> Option<&str> {
         self.memo_type.as_deref()
     }
+    async fn priority(&self) -> i32 {
+        self.priority as i32
+    }
 }
 
 impl Transaction {
@@ -78,6 +84,33 @@ impl Transaction {
         memo: Option<String>,
         memo_type: Option<String>,
         metadata: Option<serde_json::Value>,
+    ) -> Self {
+        Self::new_with_priority(
+            stellar_account,
+            amount,
+            asset_code,
+            anchor_transaction_id,
+            callback_type,
+            callback_status,
+            memo,
+            memo_type,
+            metadata,
+            0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_priority(
+        stellar_account: String,
+        amount: BigDecimal,
+        asset_code: String,
+        anchor_transaction_id: Option<String>,
+        callback_type: Option<String>,
+        callback_status: Option<String>,
+        memo: Option<String>,
+        memo_type: Option<String>,
+        metadata: Option<serde_json::Value>,
+        priority: i16,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -94,6 +127,7 @@ impl Transaction {
             memo,
             memo_type,
             metadata,
+            priority,
         }
     }
 }

@@ -285,3 +285,74 @@ async fn test_invalid_signature_flow() {
         .unwrap()
         .contains("Invalid signature"));
 }
+
+#[tokio::test]
+async fn test_priority_queue_ordering() {
+    let (base_url, pool, _container) = setup_test_app().await;
+    let client = reqwest::Client::new();
+
+    let stellar = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    // Insert normal (0), high (1), critical (2) in that order
+    for (priority, label) in [(0i16, "normal"), (1, "high"), (2, "critical")] {
+        let res = client
+            .post(format!("{}/callback", base_url))
+            .header("X-App-Signature", "valid-signature")
+            .json(&serde_json::json!({
+                "stellar_account": stellar,
+                "amount": "10.00",
+                "asset_code": "USD",
+                "priority": priority,
+                "callback_type": label,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    // Verify DB ordering: critical first, then high, then normal
+    let rows: Vec<(i16, Option<String>)> = sqlx::query_as(
+        "SELECT priority, callback_type FROM transactions WHERE status = 'pending' \
+         ORDER BY priority DESC, created_at ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].0, 2); // critical
+    assert_eq!(rows[1].0, 1); // high
+    assert_eq!(rows[2].0, 0); // normal
+}
+
+#[tokio::test]
+async fn test_priority_defaults_to_zero() {
+    let (base_url, pool, _container) = setup_test_app().await;
+    let client = reqwest::Client::new();
+
+    let res = client
+        .post(format!("{}/callback", base_url))
+        .header("X-App-Signature", "valid-signature")
+        .json(&serde_json::json!({
+            "stellar_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "amount": "50.00",
+            "asset_code": "USD",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let tx: serde_json::Value = res.json().await.unwrap();
+    let tx_id: uuid::Uuid = tx["id"].as_str().unwrap().parse().unwrap();
+
+    let priority: i16 =
+        sqlx::query_scalar("SELECT priority FROM transactions WHERE id = $1")
+            .bind(tx_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(priority, 0);
+}

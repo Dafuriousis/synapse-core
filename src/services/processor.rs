@@ -31,10 +31,10 @@ pub async fn process_batch(pool: &PgPool, _horizon_client: &HorizonClient) -> an
         r#"
         SELECT id, stellar_account, amount, asset_code, status, created_at, updated_at,
                anchor_transaction_id, callback_type, callback_status, settlement_id,
-               memo, memo_type, metadata
+               memo, memo_type, metadata, priority
         FROM transactions
         WHERE status = 'pending'
-        ORDER BY created_at ASC
+        ORDER BY priority DESC, created_at ASC
         LIMIT 10
         FOR UPDATE SKIP LOCKED
         "#,

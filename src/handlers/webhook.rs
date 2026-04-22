@@ -32,6 +32,9 @@ pub struct CallbackPayload {
     pub memo: Option<String>,
     pub memo_type: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    /// Processing priority: 0 = normal (default), 1 = high, 2 = critical
+    #[serde(default)]
+    pub priority: i16,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -321,7 +324,10 @@ pub async fn callback(
     let amount = sqlx::types::BigDecimal::from_str(&payload.amount)
         .map_err(|_| AppError::Validation(format!("Invalid amount: {}", payload.amount)))?;
 
-    let tx = Transaction::new(
+    // Clamp priority to valid range [0, 2]
+    let priority = payload.priority.clamp(0, 2);
+
+    let tx = Transaction::new_with_priority(
         payload.stellar_account,
         amount,
         payload.asset_code,
@@ -331,6 +337,7 @@ pub async fn callback(
         payload.memo,
         payload.memo_type,
         payload.metadata,
+        priority,
     );
 
     let inserted = queries::insert_transaction(&state.app_state.db, &tx)
