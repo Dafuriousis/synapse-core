@@ -51,6 +51,9 @@ async fn setup_test_app() -> (
         readiness: synapse_core::ReadinessState::new(),
         tx_broadcast: tx_broadcast.clone(),
         query_cache: synapse_core::services::QueryCache::new("redis://localhost:6379").unwrap(),
+        batch_tx: None,
+        tenant_configs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        profiling_manager: synapse_core::handlers::profiling::ProfilingManager::new(),
     };
 
     let app = create_app(app_state);

@@ -43,6 +43,9 @@ async fn test_api_versioning_headers() {
         readiness: synapse_core::ReadinessState::new(),
         tx_broadcast: tx,
         query_cache,
+        batch_tx: None,
+        tenant_configs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        profiling_manager: synapse_core::handlers::profiling::ProfilingManager::new(),
     };
     let app = create_app(app_state);
 

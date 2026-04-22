@@ -17,6 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::types::BigDecimal;
 use std::str::FromStr;
+use tokio::sync::oneshot;
 use tracing::instrument;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -333,9 +334,24 @@ pub async fn callback(
         payload.metadata,
     );
 
-    let inserted = queries::insert_transaction(&state.app_state.db, &tx)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let inserted = if let Some(batch_tx) = &state.app_state.batch_tx {
+        // Route through the batch channel for bulk insert
+        let (reply_tx, reply_rx) = oneshot::channel();
+        batch_tx
+            .send(crate::BatchInsertRequest {
+                transaction: tx,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| AppError::DatabaseError("batch channel closed".to_string()))?;
+        reply_rx
+            .await
+            .map_err(|_| AppError::DatabaseError("batch reply channel dropped".to_string()))??
+    } else {
+        queries::insert_transaction(&state.app_state.db, &tx)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    };
 
     Ok((StatusCode::CREATED, Json(inserted)))
 }

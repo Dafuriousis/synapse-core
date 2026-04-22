@@ -243,6 +243,10 @@ async fn serve(config: config::Config) -> anyhow::Result<()> {
     tracing::info!("Feature flags service initialized");
 
     let monitor_pool = pool.clone();
+    let batch_tx = synapse_core::spawn_batch_flusher(pool.clone());
+    tracing::info!("Batch insert flusher started (size={}, timeout_ms={})",
+        synapse_core::BATCH_INSERT_SIZE, synapse_core::BATCH_INSERT_TIMEOUT_MS);
+
     let app_state = AppState {
         db: pool.clone(),
         pool_manager,
@@ -253,6 +257,9 @@ async fn serve(config: config::Config) -> anyhow::Result<()> {
         readiness: ReadinessState::new(),
         tx_broadcast,
         query_cache,
+        batch_tx: Some(batch_tx),
+        tenant_configs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        profiling_manager: synapse_core::handlers::profiling::ProfilingManager::new(),
     };
 
     let graphql_schema = build_schema(app_state.clone());

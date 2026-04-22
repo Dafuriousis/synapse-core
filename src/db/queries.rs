@@ -215,6 +215,89 @@ pub async fn invalidate_caches_for_asset(asset_code: &str) {
     invalidate_transaction_caches(asset_code).await;
 }
 
+/// Bulk-insert a batch of transactions in a single statement.
+/// Returns the inserted rows in the same order as the input slice.
+/// On failure, falls back to individual inserts so partial success is possible.
+pub async fn insert_transactions_batch(
+    pool: &PgPool,
+    txs: &[Transaction],
+) -> Vec<Result<Transaction, sqlx::Error>> {
+    if txs.is_empty() {
+        return vec![];
+    }
+
+    // Try bulk insert first
+    match try_bulk_insert(pool, txs).await {
+        Ok(inserted) => inserted.into_iter().map(Ok).collect(),
+        Err(_) => {
+            // Fall back to individual inserts
+            let mut results = Vec::with_capacity(txs.len());
+            for tx in txs {
+                results.push(insert_transaction(pool, tx).await);
+            }
+            results
+        }
+    }
+}
+
+async fn try_bulk_insert(pool: &PgPool, txs: &[Transaction]) -> Result<Vec<Transaction>> {
+    // Build: INSERT INTO transactions (...) VALUES ($1,$2,...),($N+1,...) RETURNING *
+    let col_count = 15_usize; // columns per row
+    let mut placeholders = Vec::with_capacity(txs.len());
+    let mut param_idx = 1_usize;
+
+    for _ in txs {
+        let row: Vec<String> = (param_idx..param_idx + col_count)
+            .map(|i| format!("${i}"))
+            .collect();
+        placeholders.push(format!("({})", row.join(", ")));
+        param_idx += col_count;
+    }
+
+    let sql = format!(
+        r#"
+        INSERT INTO transactions (
+            id, stellar_account, amount, asset_code, status,
+            created_at, updated_at, anchor_transaction_id, callback_type, callback_status,
+            settlement_id, memo, memo_type, metadata, priority
+        ) VALUES {}
+        RETURNING *
+        "#,
+        placeholders.join(", ")
+    );
+
+    let mut q = sqlx::query_as::<_, Transaction>(&sql);
+    for tx in txs {
+        q = q
+            .bind(tx.id)
+            .bind(&tx.stellar_account)
+            .bind(&tx.amount)
+            .bind(&tx.asset_code)
+            .bind(&tx.status)
+            .bind(tx.created_at)
+            .bind(tx.updated_at)
+            .bind(&tx.anchor_transaction_id)
+            .bind(&tx.callback_type)
+            .bind(&tx.callback_status)
+            .bind(tx.settlement_id)
+            .bind(&tx.memo)
+            .bind(&tx.memo_type)
+            .bind(&tx.metadata)
+            .bind(tx.priority);
+    }
+
+    let inserted = q.fetch_all(pool).await?;
+
+    // Invalidate caches for all affected assets
+    let asset_codes: std::collections::HashSet<_> =
+        inserted.iter().map(|t| t.asset_code.clone()).collect();
+    for asset_code in asset_codes {
+        invalidate_transaction_caches(&asset_code).await;
+    }
+
+    Ok(inserted)
+}
+
 // --- Settlement Queries ---
 
 pub async fn insert_settlement(
