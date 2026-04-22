@@ -156,6 +156,8 @@ pub struct TransactionDlq {
     pub original_created_at: DateTime<Utc>,
     pub moved_to_dlq_at: DateTime<Utc>,
     pub last_retry_at: Option<DateTime<Utc>>,
+    pub permanently_failed: bool,
+    pub next_retry_at: Option<DateTime<Utc>>,
 }
 #[cfg(test)]
 mod tests {
